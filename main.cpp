@@ -1,9 +1,15 @@
+/*
+ *
+ * syslog_prelauncher uses the Mac OS ptrace API to elevate the syslog logging for
+ * a targeted binary. Only work on mac for now
+ *
+ */
+
 #include <iostream>
 
 #include <pwd.h>
 #include <unistd.h>
 #include <sys/ptrace.h>
-#include <sys/stat.h>
 
 class CurrentUser {
     public:
@@ -30,6 +36,7 @@ class CurrentUser {
 
             passwd_ent = ::getpwuid(id);
 
+            // TODO: need to do something better for the failure case here.
             return passwd_ent == NULL ? NULL : passwd_ent->pw_name;
         };
 };
