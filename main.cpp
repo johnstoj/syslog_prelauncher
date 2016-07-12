@@ -7,72 +7,69 @@
 
 #include <iostream>
 
-#include <pwd.h>
-#include <unistd.h>
 #include <sys/ptrace.h>
 
-class CurrentUser {
-    public:
-        CurrentUser() {};
-        virtual ~CurrentUser() {};
 
-        static int set_id(uid_t id) { return ::setuid(id); }
-
-        static uid_t effective_id() { return ::geteuid(); };
-        static int set_effective_id(uid_t id) {return ::seteuid(id); };
-
-        static int set_group_id(gid_t id) { return ::setgid(id); }
-
-        static int set_effective_group_id(gid_t id) { return ::setegid(id); }
-
-        static bool is_root() { return CurrentUser::effective_id() == 0; };
-
-        // TODO: these should not assume the vars exist.
-        static uid_t sudo_uid() { return static_cast<uid_t>(::atoi(::getenv("SUDO_UID"))); }
-        static gid_t sudo_gid() { return static_cast<gid_t>(::atoi(::getenv("SUDO_GID"))); }
-
-        static char* id_to_user(uid_t id) {
-            struct passwd *passwd_ent = NULL;
-
-            passwd_ent = ::getpwuid(id);
-
-            // TODO: need to do something better for the failure case here.
-            return passwd_ent == NULL ? NULL : passwd_ent->pw_name;
-        };
-};
-
+#include "CUser.h"
+#include "CFile.h"
+#include "CCmdLine.h"
 
 typedef enum {
-    NONE = 0,
-    NOT_ROOT,
-    FORK_FAILURE,
-    CHILD_NOT_SIGTRAPPED,
-    SYSLOG_FAILURE,
-    WAKE_FAIL,
-    TRACE_ME_FAIL
-} ErrorCode;
+    ERROR_NONE = 0,
+    ERROR_NOT_ROOT,
+    ERROR_CMD_LINE,
+    ERROR_FILE_NOT_FOUND,
+    ERROR_FORK_FAILURE,
+    ERROR_CHILD_NOT_SIGTRAPPED,
+    ERROR_SYSLOG_FAILURE,
+    ERROR_WAKE_FAIL,
+    ERROR_TRACE_ME_FAIL
+} Error;
 
+
+void usage(std::string& appname);
+void usage(std::string& appname) {
+    std::cout << "Usage: [sudo] " << appname << " /path/target_executable <target_params>" << std::endl;
+    std::cout << "  e.g. sudo " << appname << " /usr/bin/touch /tmp/foo" << std::endl << std::endl;
+}
 
 int main(int argc, char *argv[]);
 int main(int argc, char *argv[]) {
-    ErrorCode error_code = ErrorCode::NONE;
+    Error error = Error::ERROR_NONE;
 
-    std::cout << "[-] Effective UID: " << CurrentUser::effective_id() << " (" << CurrentUser::id_to_user(CurrentUser::effective_id()) << ")." << std::endl;
-    if (CurrentUser::is_root()) {
-        std::cout << "[-] Actual UID: " << CurrentUser::sudo_uid() << " (" << CurrentUser::id_to_user(CurrentUser::sudo_uid()) << ")." << std::endl;
+    std::cout << "[-] Effective UID: " << CUser::effective_id() << " (" << CUser::id_to_user(CUser::effective_id()) << ")." << std::endl;
+    if (CUser::is_root()) {
+        std::cout << "[-] Actual UID: " << CUser::sudo_uid() << " (" << CUser::id_to_user(CUser::sudo_uid()) << ")." << std::endl;
     } else {
         std::cout << "[x] Not root! Try 'sudo'." << std::endl;
-        error_code = ErrorCode::NOT_ROOT;
+        error = Error::ERROR_NOT_ROOT;
+    }
+
+    CCmdLine command_line;
+    if (error == Error::ERROR_NONE) {
+        command_line.parse(argc, argv);
+        if (command_line.m_vectored_app_arguments.size() == 0) {
+            std::cout << "[x] Not enough arguments!" << std::endl << std::endl;
+            usage(command_line.m_app);
+            error = Error::ERROR_CMD_LINE;
+        }
+    }
+
+    if (error == Error::ERROR_NONE) {
+        if (! CFile::exists(command_line.m_vectored_app_arguments[0].c_str())) {
+            std::cout << "[x] Can't find target '" << command_line.m_vectored_app_arguments[0] << "'; Specify full path?" << std::endl;
+            error = Error::ERROR_FILE_NOT_FOUND;
+        }
     }
 
     int forked_pid = -1;
-    if (error_code == ErrorCode::NONE) {
+    if (error == Error::ERROR_NONE) {
         std::cout << "[-] Forking..." << std::endl;
         forked_pid = ::fork();
         switch (forked_pid) {
             case -1: {       // Fork error.
                 std::cout << "[x] ::fork() failed." << std::endl;
-                error_code = ErrorCode::FORK_FAILURE;
+                error = Error::ERROR_FORK_FAILURE;
                 break;
             }
 
@@ -81,22 +78,22 @@ int main(int argc, char *argv[]) {
                 int ptrace_result = ::ptrace(PT_TRACE_ME, 0, 0, 0);
                 if (ptrace_result != 0) {
                     std::cout << "  [x] ::ptrace(PT_TRACE_ME) failed with result: " << ptrace_result << std::endl;
-                    error_code = ErrorCode::TRACE_ME_FAIL;
+                    error = Error::ERROR_TRACE_ME_FAIL;
                 }
 
-                if (error_code == ErrorCode::NONE) {
+                if (error == Error::ERROR_NONE) {
                     std::cout << "  [-] Relinquishing subprocess privileges (" <<
-                    CurrentUser::id_to_user(CurrentUser::effective_id()) << ")." << std::endl;
-                    CurrentUser::set_id(CurrentUser::sudo_uid());
-                    CurrentUser::set_effective_id(CurrentUser::sudo_uid());
-                    CurrentUser::set_group_id(CurrentUser::sudo_gid());
-                    CurrentUser::set_effective_group_id(CurrentUser::sudo_gid());
-                    std::cout << "  [-] New subprocess UID: " << CurrentUser::effective_id() << " (" <<
-                    CurrentUser::id_to_user(CurrentUser::effective_id()) << ")." << std::endl;
+                    CUser::id_to_user(CUser::effective_id()) << ")." << std::endl;
+                    CUser::set_id(CUser::sudo_uid());
+                    CUser::set_effective_id(CUser::sudo_uid());
+                    CUser::set_group_id(CUser::sudo_gid());
+                    CUser::set_effective_group_id(CUser::sudo_gid());
+                    std::cout << "  [-] New subprocess UID: " << CUser::effective_id() << " (" <<
+                    CUser::id_to_user(CUser::effective_id()) << ")." << std::endl;
 
-                    std::cout << "  [-] Executing target..." << std::endl;
-                    // TODO: This needs to come from argv.
-                    ::execl("/usr/bin/touch", "touch", "/tmp/foo", NULL);
+                    std::cout << "  [-] Executing target: " << command_line.m_target_path.c_str() << " " << command_line.m_target_arguments.c_str() << std::endl;
+                    // TODO: What happens if the target is not executable?
+                    ::execl(command_line.m_target_path.c_str(), command_line.m_target.c_str(), command_line.m_target_arguments.c_str(), NULL);
                 }
 
                 break;
@@ -108,18 +105,18 @@ int main(int argc, char *argv[]) {
     }
 
     int wstatus = 0;
-    if (error_code == ErrorCode::NONE) {
+    if (error == Error::ERROR_NONE) {
         std::cout << "[-] Forked PID: " << forked_pid << std::endl;
 
         std::cout << "[-] Awaiting SIGTRAP..." << std::endl;
         ::wait(&wstatus);
         if (WSTOPSIG(wstatus) != SIGTRAP) {
             std::cout << "[x] Unexpected child wait status received!" << std::endl;
-            error_code = ErrorCode::CHILD_NOT_SIGTRAPPED;
+            error = Error::ERROR_CHILD_NOT_SIGTRAPPED;
         }
     }
 
-    if (error_code == ErrorCode::NONE) {
+    if (error == Error::ERROR_NONE) {
         std::cout << "[-] Received SIGTRAP." << std::endl;
 
         std::cout << "[-] Reconfiguring syslog for PID: " << forked_pid << std::endl;
@@ -130,25 +127,25 @@ int main(int argc, char *argv[]) {
         int syslog_status = ::system(syslog_pid_command.c_str());
         if (syslog_status != 0) {
             std::cout << "[x] Syslog failed with status: " << syslog_status << syslog_status << std::endl;
-            error_code = ErrorCode::SYSLOG_FAILURE;
+            error = Error::ERROR_SYSLOG_FAILURE;
         }
     }
 
-    if (error_code == ErrorCode::NONE) {
+    if (error == Error::ERROR_NONE) {
         std::cout << "[-] Waking PID: " << forked_pid << std::endl;
         int ptrace_result = ::ptrace(PT_CONTINUE, forked_pid, (caddr_t) 1, 0);
         if (ptrace_result != 0) {
             std::cout << "[x] Failed waking PID; ::ptrace(PT_CONTINUE) result: " << ptrace_result << std::endl;
-            error_code = ErrorCode::WAKE_FAIL;
+            error = Error::ERROR_WAKE_FAIL;
         }
     }
 
-    if (error_code == ErrorCode::NONE) {
-        std::cout << "[-] Waiting for subprocess to complete..." << std::endl;
+    if (error == Error::ERROR_NONE) {
+        std::cout << "[-] Waiting for the subprocess to complete..." << std::endl;
         ::wait(&wstatus);
     }
 
-    std::cout << (error_code == ErrorCode::NONE ? "[-] " : "[x] ") << "Done." << std::endl;
+    std::cout << (error == Error::ERROR_NONE ? "[-] " : "[x] ") << "Done." << std::endl;
 
-    return error_code;
+    return error;
 }
