@@ -13,9 +13,22 @@ class CFile {
         virtual ~CFile() {};
 
         static bool exists(const char *path) {
+            // Note: Subject to race conditions unless a lock is obtained on the path!
             struct ::stat fstat;
 
             return ::stat(path, &fstat) == 0;
+        }
+
+        static bool is_executable(const char *path) {
+            // Note: Subject to race conditions unless a lock is obtained on the path!
+            bool is_executable = false;
+            struct ::stat fstat;
+
+            if (::stat(path, &fstat) == 0) {
+                return (fstat.st_mode & S_IXUSR) > 1;
+            }
+
+            return is_executable;
         }
 
         static void basename(std::string& path, std::string& base) {

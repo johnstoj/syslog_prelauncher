@@ -19,6 +19,7 @@ typedef enum {
     ERROR_NOT_ROOT,
     ERROR_CMD_LINE,
     ERROR_FILE_NOT_FOUND,
+    ERROR_FILE_NOT_EXECUTABLE,
     ERROR_FORK_FAILURE,
     ERROR_CHILD_NOT_SIGTRAPPED,
     ERROR_SYSLOG_FAILURE,
@@ -62,6 +63,13 @@ int main(int argc, char *argv[]) {
         }
     }
 
+    if (error == Error::ERROR_NONE) {
+        if (! CFile::is_executable(command_line.m_vectored_app_arguments[0].c_str())) {
+            std::cout << "[x] Target file '" << command_line.m_vectored_app_arguments[0] << "' appears to not be executable?" << std::endl;
+            error = Error::ERROR_FILE_NOT_EXECUTABLE;
+        }
+    }
+
     int forked_pid = -1;
     if (error == Error::ERROR_NONE) {
         std::cout << "[-] Forking..." << std::endl;
@@ -92,7 +100,6 @@ int main(int argc, char *argv[]) {
                     CUser::id_to_user(CUser::effective_id()) << ")." << std::endl;
 
                     std::cout << "  [-] Executing target: " << command_line.m_target_path.c_str() << " " << command_line.m_target_arguments.c_str() << std::endl;
-                    // TODO: What happens if the target is not executable?
                     ::execl(command_line.m_target_path.c_str(), command_line.m_target.c_str(), command_line.m_target_arguments.c_str(), NULL);
                 }
 
